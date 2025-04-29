@@ -1,0 +1,93 @@
+%%writefile phonebook_search.cu
+#include <bits/stdc++.h>
+using namespace std;
+#include <cuda.h>
+
+using namespace std;
+
+struct Contact
+{
+    char name[256];
+    char phone_number[256];
+};
+
+__device__ bool check(char* name, char *search_name, int length)
+{
+    for (int i = 0; name[i] != '\0'; i++)
+    {
+        int j = 0;
+        while (name[i + j] != '\0' && search_name[j] != '\0' && name[i + j] == search_name[j])
+        {
+            j++;
+        }
+        if (j == length - 1)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+__global__ void searchPhonebook(Contact* phonebook, int size, char* search_name, int length)
+{
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index < size)
+    {
+        if (check(phonebook[index].name, search_name, length))
+        {
+            printf("Name: %s, Phone: %s\n", phonebook[index].name, phonebook[index].phone_number);
+        }
+    }
+}
+
+int main(int argc, char* argv[])
+{
+    if (argc != 3) {
+        cerr << "Usage: " << argv[0] << " <search_name> <num_threads>" << endl;
+        return 1;
+    }
+
+    string search_name = argv[1];
+    int num_threads = atoi(argv[2]);
+    vector<string> file_names = {"phonebook1.txt", "phonebook2.txt"};
+    vector<Contact> phonebook;
+
+    for (auto file_name: file_names)
+    {
+        ifstream file(file_name);
+        Contact contact;
+        while (file >> contact.name >> contact.phone_number)
+        {
+            phonebook.push_back(contact);
+        }
+        file.close();
+    }
+    int size = phonebook.size();
+    Contact* device_phonebook;
+    cudaMalloc((void **)&device_phonebook, sizeof(Contact) * size);
+
+    cudaMemcpy(device_phonebook, phonebook.data(), sizeof(Contact) * size, cudaMemcpyHostToDevice);
+
+    int name_length = search_name.size() + 1;
+    char* device_search_name;
+    cudaMalloc((void **)&device_search_name, name_length);
+
+    cudaMemcpy(device_search_name, search_name.c_str(), name_length, cudaMemcpyHostToDevice);
+
+    for (int i = 0; i < size; i += num_threads) {
+        int currentBatchSize = min(num_threads, size - i);
+        searchPhonebook<<<1, currentBatchSize>>>(device_phonebook + i, currentBatchSize, device_search_name, name_length);
+        cudaDeviceSynchronize();
+
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            cout << "CUDA error: " << cudaGetErrorString(err) << endl;
+        }
+
+    }
+
+    cudaFree(device_phonebook);
+    cudaFree(device_search_name);
+    return 0;
+}
